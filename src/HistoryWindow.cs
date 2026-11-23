@@ -125,6 +125,8 @@ namespace AppleMusicHistory
             tray.DoubleClick += delegate { OpenHistory(); };
             SyncLogin();
             FormClosing += (s, e) => { if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); } };
+            // The tray's message loop has no MainForm to stop it after a real close.
+            FormClosed += delegate { Application.ExitThread(); };
         }
 
         public void OpenHistory()

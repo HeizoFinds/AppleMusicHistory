@@ -2,12 +2,16 @@ using System;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace AppleMusicHistory
 {
     internal static class HistoryTests
     {
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+
         private static readonly DateTimeOffset Start = DateTimeOffset.Parse("2026-03-15T08:00:00+08:00");
         private static Timeline Frame(double seconds, double position)
         {
@@ -51,8 +55,26 @@ namespace AppleMusicHistory
                 Require(grid.RowCount == 0, "empty search clears rows");
                 search.Clear();
                 window.Close();
+                Require(!window.Visible && !window.IsDisposed, "user close keeps the tray recorder alive");
                 window.OpenHistory();
                 Require(grid.RowCount == rows.Count && grid.FirstDisplayedScrollingRowIndex == 0, "reopen from tray");
+            }
+            // WinForms retains UserClosing after a canceled close. Exercise a system close first on a new window.
+            using (var window = new HistoryWindow(db))
+            {
+                window.Opacity = 0;
+                window.ShowInTaskbar = false;
+                window.OpenHistory();
+                bool loopWasStuck = false;
+                using (var timeout = new Timer { Interval = 3000 })
+                {
+                    timeout.Tick += delegate { loopWasStuck = true; Application.ExitThread(); };
+                    const uint WM_CLOSE = 0x0010;
+                    window.BeginInvoke(new Action(() => SendMessage(window.Handle, WM_CLOSE, IntPtr.Zero, IntPtr.Zero)));
+                    timeout.Start();
+                    Application.Run();
+                }
+                Require(window.IsDisposed && !loopWasStuck, "system close releases the recorder message loop");
             }
         }
 
@@ -106,7 +128,7 @@ namespace AppleMusicHistory
                     Require(rows[0].Id != rows[1].Id && reopened.Read(true).Single().Id == rows[0].Id, "latest play");
                     CheckWindow(reopened);
                 }
-                Console.WriteLine("PASS: playback tracking, SQLite persistence, initial row painting, search, tray reopen.");
+                Console.WriteLine("PASS: playback tracking, SQLite persistence, initial row painting, search, tray reopen, system close.");
             }
             finally { File.Delete(path); }
         }
